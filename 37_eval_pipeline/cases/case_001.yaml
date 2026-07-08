@@ -1,0 +1,32 @@
+# 评测集用例模板 —— 每个 case 都带完整元数据（对应文章第一节）
+# 一个 .yaml 可以放单个 case，也可以放一个 case 列表。
+- id: case_001
+  category: 退货政策
+  difficulty: medium
+  source: 线上_2026_05_03_工单_T12345     # 这个 case 怎么来的
+  reporter: 客服张伟                      # 谁报告的
+  added_date: 2026-05-05
+
+  input:
+    user_query: "我上周买的产品想退，但发票丢了能退吗？"
+    user_context:
+      vip_level: 1
+      purchase_history: "..."
+
+  expected_behavior:
+    intent: "退货咨询"
+    should_call_tools: ["query_order", "check_refund_policy"]
+    should_mention: ["无发票退货政策", "VIP 退货特权"]
+    should_not_mention: ["拒绝退款"]
+    tone: "礼貌、解决导向"
+
+  evaluation_metrics:
+    - faithfulness: 0.9   # 答案要忠实于政策
+    - answer_relevancy: 0.85
+    - llm_rubric: "回答必须明确告诉用户能否退、需要什么材料"
+
+  notes: |
+    历史 Bad Case：之前 AI 错误回答"无发票不能退"
+    实际 VIP 用户有"无发票申诉退货"特权
+
+  last_validated: 2026-05-15

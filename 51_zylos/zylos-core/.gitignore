@@ -1,0 +1,13 @@
+node_modules/
+*.log
+.DS_Store
+.env
+*.db
+*.db-shm
+*.db-wal
+.zylos/runtime-env.manifest
+test/integration/runtime/*.local.env
+test/integration/runtime/*.local.json
+
+# Agent worktrees (runtime artifact)
+.claude/worktrees/

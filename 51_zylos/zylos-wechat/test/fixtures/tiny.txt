@@ -1,0 +1,1 @@
+Hello from zylos-wechat media upload test. This is a plain text fixture file for smoke testing the file upload pipeline.

@@ -1,0 +1,26 @@
+# LiteLLM Gateway 配置 —— 对应文章第 44 篇降级路由 + 第 47 篇部署。
+# 模型组 + 成本路由，应用层只指定 group 名，Gateway 内按成本/延迟/可用性选最优。
+model_list:
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: claude-3-5-sonnet
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+router_settings:
+  routing_strategy: cost-based-routing
+  model_group_alias:
+    simple_intent: gpt-4o-mini
+    complex_reasoning: gpt-4o
+
+litellm_settings:
+  drop_params: true
+  num_retries: 2
+  request_timeout: 60

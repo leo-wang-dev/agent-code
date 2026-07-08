@@ -1,0 +1,6 @@
+Classify the customer message into exactly one label. Output only the label.
+
+Labels: logistics, complaint, refund, product_info, contact
+
+Message: {{user_input}}
+Label:

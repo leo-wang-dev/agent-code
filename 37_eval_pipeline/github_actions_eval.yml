@@ -1,0 +1,62 @@
+# GitHub Actions 三级评测流水线（对应文章第三节）
+# 用法：把本文件放到仓库根 `.github/workflows/llm_eval.yml` 即生效。
+#
+# 三级策略（按运行时长分级，对应不同触发时机）：
+#   Level 1 Smoke     每次 push，10-30 个关键 case，5 分钟内出结果
+#   Level 2 Regression 每次 PR，100-500 核心场景 + 全部历史 Bad Case，必过才能 merge
+#   Level 3 Full       每周定时，1000-3000 完整评测集，深度评估 + 性能基线
+name: LLM Eval Pipeline
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 2 * * 0'   # 每周日凌晨跑 Full Eval
+
+jobs:
+  smoke_test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Run Smoke Tests
+        run: |
+          promptfoo eval --config eval/smoke.yaml
+          deepeval test run eval/smoke/
+      - name: Check Threshold
+        run: |
+          python eval/check_thresholds.py --level smoke
+          # 任何指标 < 阈值就 exit 1，CI 失败
+
+  regression_test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs: smoke_test
+    steps:
+      - uses: actions/checkout@v3
+      - name: Run Regression
+        run: |
+          ragas evaluate --suite regression
+          promptfoo eval --config eval/regression.yaml
+      - name: Compare with main branch
+        run: |
+          python eval/compare_baseline.py
+          # 关键指标下降 > 3% → 阻断 PR
+      - name: Post Results to PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          recreate: true
+          message-path: eval/results/summary.md
+
+  full_eval:
+    if: github.event_name == 'schedule'
+    runs-on: large-runner
+    steps:
+      - uses: actions/checkout@v3
+      - name: Run Full Eval
+        run: ragas evaluate --suite full
+      - name: Generate Report
+        run: python eval/generate_report.py
+      - name: Upload Dashboard
+        run: python eval/push_to_dashboard.py

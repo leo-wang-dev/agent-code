@@ -1,0 +1,14 @@
+# 后端镜像 —— 构建第 46 篇的 FastAPI 骨架。
+# build context = 46_backend_foundation/
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 依赖（生产建议锁 requirements.txt）
+RUN pip install --no-cache-dir \
+    fastapi "uvicorn[standard]" sqlalchemy asyncpg "pydantic[email]" alembic
+
+COPY . /app
+
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]

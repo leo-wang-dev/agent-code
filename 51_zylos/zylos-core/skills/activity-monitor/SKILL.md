@@ -1,0 +1,226 @@
+---
+name: activity-monitor
+description: Guardian service that monitors the active runtime agent's state and automatically restarts it if stopped. Use when checking agent liveness state or understanding the auto-restart mechanism.
+user-invocable: false
+---
+
+# Activity Monitor Skill
+
+PM2 guardian service that monitors the active runtime agent's (Claude or Codex) activity state and ensures it's always running.
+
+## When to Use
+
+This is a **PM2 service** (not directly invoked by Claude). It runs continuously in the background.
+
+## What It Does
+
+1. **Activity Monitoring**: Tracks the agent's busy/idle state every second
+2. **Status File**: Writes `~/zylos/activity-monitor/agent-status.json` with current state (busy/idle, idle_seconds, health)
+3. **Guardian Mode**: Automatically restarts the agent if it stops or crashes
+4. **Maintenance Awareness**: Waits for restart/upgrade scripts to complete before starting the agent
+5. **Heartbeat Liveness Detection**: Periodically sends heartbeat probes via the C4 control queue to verify the agent is responsive, triggering recovery when probes fail
+6. **Health Check**: Periodically enqueues system health checks (PM2, disk, memory) via the C4 control queue
+7. **Daily Upgrade**: Enqueues a Claude Code upgrade via the C4 control queue at 5:00 AM local time daily (disabled by default; enable with `zylos config set daily_upgrade_enabled true`)
+8. **Context Monitoring**: Receives context usage data after every turn; triggers early memory sync and new-session handoff at thresholds read from `config.json` (`new_session_threshold` for Claude, `codex_new_session_threshold` for Codex), each with a built-in runtime fallback if the key is unset
+
+## Status File Format
+
+```json
+{
+  "state": "idle",
+  "last_activity": 1738675200,
+  "last_check": 1738675210,
+  "last_check_human": "2026-02-04 20:30:10",
+  "idle_seconds": 5,
+  "inactive_seconds": 10,
+  "source": "conv_file",
+  "health": "ok"
+}
+```
+
+- `state`: "busy" | "idle" | "stopped" | "offline"
+- `idle_seconds`: Time since entering idle state (0 when busy)
+- `source`: "conv_file" (reliable) | "tmux_activity" (fallback)
+- `health`: "ok" | "recovering" | "down" — liveness health from the heartbeat engine
+
+## PM2 Management
+
+```bash
+# Start
+pm2 start ~/zylos/.claude/skills/activity-monitor/scripts/activity-monitor.js --name activity-monitor
+
+# Restart
+pm2 restart activity-monitor
+
+# View logs
+pm2 logs activity-monitor
+
+# Check status
+pm2 list
+```
+
+## Guardian Behavior
+
+- **Detection**: Checks if the agent is running every second
+- **Restart Delay**: Waits 5 seconds of continuous "not running" before restarting
+- **Maintenance Wait**: Detects restart/upgrade scripts and waits for completion
+- **Recovery Prompt**: Sends catch-up message via C4 after restart
+
+## How It Works
+
+1. **Monitor Loop** (every 1s):
+   - Check if tmux session exists
+   - Check if agent process is running
+   - Detect activity (conversation file mtime for Claude; tmux activity for Codex)
+   - Calculate idle/busy state
+   - Write status to ~/zylos/activity-monitor/agent-status.json
+
+2. **Guardian Logic**:
+   - If agent not running for 5+ seconds → restart
+   - Wait for maintenance scripts to complete
+   - Send recovery prompt via C4 after successful restart
+
+3. **Activity Detection**:
+   - Claude primary: Conversation file modification time (reliable)
+   - Codex / fallback: tmux window activity
+   - Threshold: 3 seconds without activity = idle
+
+## Heartbeat Liveness Detection
+
+The heartbeat engine runs inside the activity monitor and uses the C4 control queue to verify Claude is actually responsive (not just process-alive).
+
+### State Machine
+
+```
+          heartbeat interval elapsed
+  ┌─────────────────────────────────────┐
+  │                                     ▼
+  │  ok ──[primary fails]──► ok (verify phase)
+  │  ▲                              │
+  │  │                     [verify fails]
+  │  │                              ▼
+  │  │                         recovering ──[recovery fails]──► recovering
+  │  │                              │                               │
+  │  │                    [ack received]              [max failures reached]
+  │  │                              │                               │
+  │  └──────────────────────────────┘                               ▼
+  │                                                               down
+  │                                                                 │
+  │                                          [ack received after manual fix]
+  └─────────────────────────────────────────────────────────────────┘
+```
+
+### Phases
+
+| Phase | Trigger | On Success | On Failure |
+|-------|---------|------------|------------|
+| **Primary** | Heartbeat interval elapsed (default 30min) | Reset timer, stay `ok` | Enter verify phase |
+| **Verify** | Primary probe failed | Return to `ok` | Kill tmux, enter `recovering` |
+| **Recovery** | In `recovering` state, Claude restarted | Return to `ok` | Kill tmux, retry (up to max) |
+| **Down** | Max restart failures reached (default 3) | Return to `ok` | Stay `down`, wait for manual fix |
+
+### Ack Deadline
+
+Each heartbeat probe is enqueued with an ack deadline. If Claude does not acknowledge the probe before the deadline expires, the control record transitions to `timeout` status and the engine treats it as a failure.
+
+### Unhealthy Message Routing
+
+When health is not `ok`, C4 intake still records incoming messages as delivered. The MessageRouter returns an immediate status response for the current message when replies are enabled; `--no-reply` messages are accepted silently. If the router IPC is unavailable, `c4-receive.js` falls back to the status file and follows the same delivered/current-message behavior.
+
+## Health Check
+
+The activity monitor periodically enqueues system health checks via the C4 control queue.
+
+- **Enabled**: On by default. Disable with `zylos config set health_check_enabled false`
+- **Interval**: Every 24 hours (86400 seconds)
+- **Persisted state**: `~/zylos/activity-monitor/health-check-state.json` (survives restarts)
+- **Priority**: 3 (normal)
+- **Gated by health**: Only enqueued when `health === 'ok'`
+- **Gated by agent**: Only enqueued when the agent process is running
+
+The health check control message instructs Claude to:
+1. Check PM2 services via `pm2 jlist`
+2. Check disk space via `df -h`
+3. Check memory via `free -m`
+4. If issues found, notify the most recent communication channel
+5. Log results to `~/zylos/logs/health.log`
+6. Acknowledge the control message
+
+## Daily Upgrade
+
+The activity monitor enqueues a daily Claude Code upgrade via the C4 control queue.
+
+- **Enabled**: Off by default. Enable with `zylos config set daily_upgrade_enabled true`
+- **Schedule**: 5:00 AM local time (configured by `DAILY_UPGRADE_HOUR`)
+- **Timezone**: Loaded from `~/zylos/.env` `TZ` field, falls back to `process.env.TZ`, then `UTC`
+- **Persisted state**: `~/zylos/activity-monitor/daily-upgrade-state.json` (tracks last upgrade date)
+- **Priority**: 3 (normal)
+- **Gated by health**: Only enqueued when `health === 'ok'`
+- **Gated by config**: Only enqueued when `daily_upgrade_enabled` is `true` in config
+- **Once per day**: Checks local date to avoid duplicate enqueues
+
+The control message instructs Claude to use the `upgrade-claude` skill, which handles idle detection, `/exit`, upgrade, and automatic restart.
+
+## Context Monitoring
+
+Event-driven context monitoring via Claude Code's statusLine feature, replacing the old hourly polling.
+
+- **Mechanism**: `context-monitor.js` runs as a statusLine command — Claude Code pipes context data to it via stdin after every turn (zero turn cost)
+- **Status file**: Writes `~/zylos/activity-monitor/statusline.json` with full context data (used_percentage, remaining_percentage, cost, session_id)
+- **Two thresholds**:
+  - **Early memory sync** at 80% of the configured threshold: Enqueues a prompt for Claude to run memory sync as a background task, so it completes well before the session switch. Only triggers when unsummarized conversation count exceeds the checkpoint threshold.
+  - **New-session handoff** at the threshold configured via `new_session_threshold` (Claude) / `codex_new_session_threshold` (Codex) in `config.json`: Enqueues the new-session trigger. When the key is absent, the runtime applies a built-in fallback. Priority 1, 5-minute cooldown.
+- **Delivery**: Enqueues via C4 control queue with bypass_state — ensures the trigger reaches Claude even during long tasks
+- **Two-stage design**: The trigger message instructs Claude to start the new-session handoff flow; the actual `/clear` is gated by block-queue-until-idle in the new-session skill's final step
+- **Log**: `~/zylos/activity-monitor/context-monitor.log`
+
+The early memory sync decouples memory sync from the session switch. Memory sync is also triggered by the new session's startup hook if unsummarized conversations exceed the threshold, so data is never lost.
+
+## Daily Memory Commit
+
+The activity monitor runs a daily git commit of the `memory/` directory.
+
+- **Schedule**: 3:00 AM local time
+- **Timezone**: Same as daily upgrade (from `~/zylos/.env` TZ)
+- **Persisted state**: `~/zylos/activity-monitor/daily-memory-commit-state.json`
+- **Script**: Calls `zylos-memory/scripts/daily-commit.js` directly (no C4, no Claude needed)
+- **Once per day**: Date-based deduplication
+- **Idempotent**: If no memory changes exist, the script skips the commit
+
+## Timing Guarantees
+
+Both daily tasks (upgrade, memory commit) use the same `DailySchedule` class:
+- **Window**: Each target hour provides a ~3600s window; with ~1s loop interval it is virtually impossible to miss entirely
+- **Dedup**: Date-based (`last_date === today`) ensures exactly-once per day, even with imprecise timing
+- **Persistence**: State files survive activity monitor restarts
+
+## Permission Auto-Approve
+
+When Claude Code shows a permission prompt (PermissionRequest event), the `hook-auth-prompt.js` hook automatically sends an Enter keystroke to approve it.
+
+**This is intentional by design.** Zylos operates in a full-delegation model where the machine's permissions are entirely granted to the AI agent. Auto-approving permission prompts is the expected behavior, not a security gap.
+
+### How It Works
+
+1. Claude Code fires a PermissionRequest hook when a tool call requires user approval
+2. `hook-auth-prompt.js` logs the event to `hook-timing.log`
+3. If `auto_approve_permission` is true (default), it enqueues a `[KEYSTROKE]Enter` control at priority 0 with bypass-state and 1-second delay
+4. The C4 dispatcher delivers the Enter keystroke to the tmux session, auto-confirming the prompt
+
+### Configuration
+
+```bash
+# Disable auto-approve (require manual confirmation)
+zylos config set auto_approve_permission false
+
+# Re-enable (default)
+zylos config set auto_approve_permission true
+```
+
+Config key: `auto_approve_permission` in `~/.zylos/config.json` (default: `true`).
+
+## Log File
+
+Activity log: `~/zylos/activity-monitor/activity.log`
+- Auto-truncates to 500 lines daily
+- Logs state changes and guardian actions

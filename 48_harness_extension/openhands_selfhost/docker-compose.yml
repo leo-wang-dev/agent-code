@@ -1,0 +1,31 @@
+# OpenHands 自部署 —— 对应文章第 48 篇 二、Harness SDK / 自部署 Harness 的工程价值。
+#
+# OpenHands（原 OpenDevin）是通用 Computer-Use Agent Harness，可自部署后挂自定义工具/prompt。
+# 官方镜像随版本演进较快，tag 请对照 https://github.com/All-Hands-AI/OpenHands releases 更新。
+#
+# 启动：docker compose up -d，浏览器打开 http://localhost:3000
+version: "3.9"
+
+services:
+  openhands:
+    image: docker.all-hands.dev/all-hands-ai/openhands:latest
+    container_name: openhands
+    ports:
+      - "3000:3000"
+    environment:
+      # LLM 配置：指向你的 Gateway（第 44/47 篇的 LiteLLM）或直连 Provider
+      LLM_MODEL: "openai/gpt-4o"
+      LLM_BASE_URL: "http://litellm:4000/v1"
+      LLM_API_KEY: "${LLM_API_KEY}"
+      # 运行沙箱镜像（OpenHands 用它执行工具/命令）
+      SANDBOX_RUNTIME_CONTAINER_IMAGE: docker.all-hands.dev/all-hands-ai/runtime:latest
+      # 持久化工作区（per-user 部署时按用户挂不同卷）
+      WORKSPACE_MOUNT_PATH: "/opt/workspace"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./workspace:/opt/workspace
+      - openhands_state:/.openhands-state
+    restart: unless-stopped
+
+volumes:
+  openhands_state:

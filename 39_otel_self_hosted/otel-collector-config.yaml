@@ -1,0 +1,79 @@
+# 工业级 OTel Collector 配置模板（对应文章第四节）
+# Collector 是数据流中转站：接收 → 处理(过滤/采样/脱敏/丰富) → 多后端导出。
+# 改本文件即可调整行为，无需动应用代码，也无需重启应用。
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # 1. 批处理（提高吞吐）
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+
+  # 2. 尾部采样（控制成本：完整保留错误和慢请求，正常流量抽样）
+  tail_sampling:
+    decision_wait: 10s
+    policies:
+      - name: errors-policy
+        type: status_code
+        status_code: {status_codes: [ERROR]}
+      - name: slow-policy
+        type: latency
+        latency: {threshold_ms: 3000}
+      - name: probabilistic-policy
+        type: probabilistic
+        probabilistic: {sampling_percentage: 10}
+
+  # 3. 属性脱敏（敏感数据集中在 Collector 一处处理）
+  attributes/redact:
+    actions:
+      - key: gen_ai.prompt
+        action: hash      # 完整 prompt 不留原文，只留 hash
+      - key: user.email
+        action: delete
+      - key: user.phone
+        action: delete
+      - key: tool.args
+        action: update
+        from_attribute: tool.args_sanitized
+
+  # 4. 属性丰富（集中注入业务上下文标签）
+  attributes/enrich:
+    actions:
+      - key: env
+        value: production
+        action: insert
+      - key: team
+        value: ai-platform
+        action: insert
+
+exporters:
+  # 5. 多后端导出（同一份 trace 同时进多个后端）
+  otlp/langfuse:
+    endpoint: langfuse-collector:4317
+  otlp/datadog:
+    endpoint: datadog-agent:4317
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+  prometheus:
+    endpoint: 0.0.0.0:8889
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, tail_sampling, attributes/redact, attributes/enrich]
+      exporters: [otlp/langfuse, otlp/datadog]
+    metrics:
+      receivers: [otlp]
+      processors: [batch, attributes/enrich]
+      exporters: [prometheus, otlp/datadog]
+    logs:
+      receivers: [otlp]
+      processors: [batch, attributes/redact]
+      exporters: [loki]

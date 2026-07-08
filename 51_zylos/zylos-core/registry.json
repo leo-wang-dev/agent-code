@@ -1,0 +1,22 @@
+{
+  "components": {
+    "telegram": {
+      "repo": "zylos-ai/zylos-telegram",
+      "description": "Telegram messaging component for Zylos agents",
+      "type": "communication",
+      "official": true
+    },
+    "lark": {
+      "repo": "zylos-ai/zylos-lark",
+      "description": "Lark (international) messaging component for Zylos agents",
+      "type": "communication",
+      "official": true
+    },
+    "browser": {
+      "repo": "zylos-ai/zylos-browser",
+      "description": "Browser automation component for Zylos agents",
+      "type": "capability",
+      "official": true
+    }
+  }
+}

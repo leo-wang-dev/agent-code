@@ -1,0 +1,21 @@
+# 最小可上线 LiteLLM Proxy 配置（对应第 34 篇「六、最小可上线 Gateway」，原文原样交付）。
+# 启动：litellm --config config.yaml --port 4000
+model_list:
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: claude
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+router_settings:
+  fallbacks:
+    - gpt-4o: ["claude"]   # GPT-4o 挂了用 Claude 兜底
+  num_retries: 3
+  request_timeout: 30
+
+litellm_settings:
+  cache: true              # 启用缓存
+  set_verbose: true

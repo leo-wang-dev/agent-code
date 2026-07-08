@@ -1,0 +1,177 @@
+---
+name: zylos-memory
+description: >-
+  Core memory system. Maintains persistent memory across sessions via tiered
+  markdown files following the Inside Out model. Handles Memory Sync (processing
+  conversations into structured memory), session rotation, consolidation, and
+  context-aware state saving. Must be launched via a runtime-appropriate
+  background subagent mechanism — do not invoke with the Skill tool.
+disable-model-invocation: true
+user-invocable: false
+---
+
+# Memory System
+
+Maintains persistent memory across sessions via tiered markdown files.
+This skill must be run via a runtime-appropriate background subagent mechanism. For Claude, use the Task tool (`subagent_type: general-purpose`, `model: sonnet`, `run_in_background: true`). For Codex, use the current session's available background-agent capability with a Codex-supported model; do not hardcode `sonnet`.
+
+## Architecture
+
+```text
+~/zylos/memory/
+├── identity.md              # Bot soul + digital assets (always loaded)
+├── state.md                 # Active working state (always loaded)
+├── references.md            # Pointers to config files (always loaded)
+├── users/
+│   └── <id>/profile.md      # Per-user preferences
+├── reference/
+│   ├── decisions.md         # Key decisions with rationale
+│   ├── projects.md          # Active/planned projects
+│   ├── preferences.md       # Shared team preferences
+│   └── ideas.md             # Uncommitted plans and ideas
+├── sessions/
+│   ├── current.md           # Today's session log
+│   └── YYYY-MM-DD.md        # Past session logs
+└── archive/                 # Cold storage
+```
+
+## Memory Sync
+
+### Priority
+
+Memory Sync is the highest-priority internal maintenance task.
+When triggered, run it before handling queued user messages.
+
+### Trigger Paths
+
+1. Session init: if C4 unsummarized count is over threshold, launch memory sync.
+2. Scheduled context check: if context usage is high, launch memory sync.
+
+Both launch a background subagent using the current runtime's supported subagent mechanism with this file's Sync Flow as the prompt.
+
+### Codex Background Execution
+
+In Codex, when the current session has a native background-agent capability,
+Memory Sync must use that capability directly. Do not create PM2 services,
+run `pm2 start ... codex exec ...`, or fork an extra `codex exec` sidecar.
+PM2 is only a fallback when no native background-agent capability is
+available; if used, explicitly record the reason in the handoff/status.
+
+Before starting Memory Sync, check for existing `memory-sync-*` PM2 entries.
+If one is running, do not start another sync writer. If only stopped entries
+exist, report them as historical records and do not create a replacement.
+
+### Sync Flow
+
+1. Rotate session log if needed:
+   `node ~/zylos/.claude/skills/zylos-memory/scripts/rotate-session.js`
+2. Fetch unsummarized conversations from C4:
+   `node ~/zylos/.claude/skills/comm-bridge/scripts/c4-fetch.js --unsummarized`
+   If output says "No unsummarized conversations.", skip to step 5
+   (still save current state). Otherwise, note the `end_id` from the
+   `[Unsummarized Range]` line.
+3. Read memory files (`identity.md`, `state.md`, `references.md`, user profiles, `reference/*`, `sessions/current.md`).
+4. Extract and classify updates from conversations into the correct files.
+5. Write memory updates (always — even without new conversations,
+   update `state.md` and `sessions/current.md` with current context).
+6. Create checkpoint (only if conversations were fetched in step 2):
+   `node ~/zylos/.claude/skills/comm-bridge/scripts/c4-checkpoint.js create <end_id> --summary "SUMMARY"`
+7. Confirm completion.
+
+## Classification Rules
+
+- `reference/decisions.md`: committed choices that close alternatives.
+- `reference/projects.md`: scoped work efforts with status.
+- `reference/preferences.md`: standing team-wide preferences.
+- `reference/ideas.md`: uncommitted proposals.
+- `users/<id>/profile.md`: user-specific preferences.
+- `state.md`: active focus and pending tasks.
+- `references.md`: pointers only; do not duplicate `.env` values.
+
+## File Formats and Examples
+
+Each memory file type has a format definition in `references/` and a
+worked example in `examples/`:
+
+| File | Format | Example |
+|------|--------|---------|
+| `identity.md` | `references/identity-format.md` | `examples/identity.md` |
+| `state.md` | `references/state-format.md` | `examples/state.md` |
+| `references.md` | `references/references-file-format.md` | `examples/references.md` |
+| `users/<id>/profile.md` | `references/user-profile-format.md` | `examples/user-profile.md` |
+| `reference/decisions.md` | `references/decisions-format.md` | `examples/decisions.md` |
+| `reference/projects.md` | `references/projects-format.md` | `examples/projects.md` |
+| `reference/preferences.md` | `references/preferences-format.md` | `examples/preferences.md` |
+| `reference/ideas.md` | `references/ideas-format.md` | `examples/ideas.md` |
+| `sessions/current.md` | `references/session-log-format.md` | `examples/session-log.md` |
+
+## Supporting Scripts
+
+- `session-start-inject.js`: prints core memory context blocks for hooks.
+- `rotate-session.js`: rotates `sessions/current.md` at day boundary.
+- `daily-commit.js`: local git snapshot for `memory/` if changed.
+- `consolidate.js`: JSON consolidation report (sizes, age, budget checks).
+  Use for deliberate memory maintenance, or for scheduler-triggered
+  consolidation when such a task is configured. Review the report and apply
+  the Consolidation Review rules below.
+- `memory-status.js`: quick health summary.
+  Use when you need a fast manual check of core file sizes and budget status.
+  If it reports `OVER`, run `consolidate.js` and perform the needed cleanup.
+
+C4 scripts used by sync flow (provided by comm-bridge skill):
+- `c4-fetch.js --unsummarized`: fetch unsummarized conversations and range.
+- `c4-checkpoint.js create <end_id> --summary "..."`: create sync checkpoint.
+
+## Consolidation Review
+
+The weekly consolidation task runs `consolidate.js` and outputs a JSON report.
+Review the report and apply these rules:
+
+### Core File Budgets
+- Files over 100% budget: summarize and trim older entries.
+  Move historical content to `reference/` or `archive/`.
+- `identity.md`, `state.md`, and `references.md` must stay under 16KB.
+- Apply file-specific cleanup:
+  - `identity.md`: keep only stable identity traits, principles, durable
+    collaboration style, and digital asset references. Move operational state
+    and one-off lessons elsewhere.
+  - `state.md`: keep active focus, pending tasks, and recent completions.
+    Move completed or historical detail to `sessions/current.md` or
+    `reference/`.
+  - `references.md`: keep pointers and lookup facts only. Move prose,
+    project history, and detailed decisions to `reference/`.
+
+### Session Logs
+- Logs in `archiveCandidatesOlderThan30Days`: move from `sessions/` to `archive/`.
+
+### Reference Files (`reference/*.md`)
+These files have no size cap. Maintenance is at the entry level.
+Freshness is reported by file mtime (Phase 1 limitation):
+- **active** (< 7 days): no action.
+- **aging** (7–30 days): no action.
+- **fading** (30–90 days): open the file. Review entries by their dates
+  and status fields. Update or confirm still-relevant entries; move
+  obsolete entries (superseded/completed/abandoned/dropped) to `archive/`.
+- **stale** (> 90 days): same as fading, but prioritize review.
+  Entries that are clearly still critical may remain.
+
+**Immunity:** Entries with importance 1-2 (defined in entry metadata) are
+immune to automatic fading suggestions. They may still be reviewed but
+should not be archived based on age alone.
+
+### User Profiles
+- Profiles over ~1KB: summarize older notes.
+
+### General Rules
+1. Never delete — always move to `archive/`. Content is recoverable
+   from `archive/` or git history.
+2. Log consolidation actions in `sessions/current.md`.
+
+## Best Practices
+
+1. Keep `state.md` lean (tight context budget).
+2. Prefer updates over duplication.
+3. Use explicit dates/timestamps for entries.
+4. Archive instead of deleting historical data.
+5. Route user data to user profiles.
+6. Keep configuration values in config files; use `references.md` as an index.

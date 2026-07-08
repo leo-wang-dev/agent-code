@@ -1,0 +1,26 @@
+# Zylos Caddyfile Template
+# Used by `zylos init` to generate ~/zylos/http/Caddyfile
+# Replace {DOMAIN} and {ZYLOS_DIR} with actual values
+
+{DOMAIN} {
+    root * {ZYLOS_DIR}/http/public
+
+    file_server {
+        hide .git .env *.db *.json
+    }
+
+    @markdown path *.md
+    handle @markdown {
+        header Content-Type "text/plain; charset=utf-8"
+    }
+
+    # Component routes are auto-inserted here by `zylos add`
+    # using marker comments: # BEGIN/END zylos-component:<name>
+
+    log {
+        output file {ZYLOS_DIR}/http/caddy-access.log {
+            roll_size 10mb
+            roll_keep 3
+        }
+    }
+}

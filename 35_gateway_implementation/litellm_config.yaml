@@ -1,0 +1,42 @@
+# LiteLLM 完整生产配置（对应第 35 篇「一、方式 B：Proxy 模式」，原文原样交付）。
+# 启动：litellm --config litellm_config.yaml --port 4000
+model_list:
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: claude
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: qwen
+    litellm_params:
+      model: openai/qwen-max
+      api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api_key: os.environ/QWEN_API_KEY
+
+  - model_name: gpt-4o-fast
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_KEY_TEAM_A
+      rpm: 1000   # 这个 Key 每分钟 1000 次上限
+
+router_settings:
+  fallbacks:
+    - gpt-4o: ["claude", "qwen"]   # 链式 Fallback
+  num_retries: 3
+  request_timeout: 30
+  routing_strategy: simple-shuffle   # 也可以按延迟、成本路由
+
+litellm_settings:
+  cache: true
+  cache_params:
+    type: redis
+    host: localhost
+    port: 6379
+
+general_settings:
+  master_key: sk-master-xxx                     # 管理员 Key
+  database_url: postgresql://user:pass@/litellm  # 用于虚拟 Key + 计费

@@ -1,0 +1,55 @@
+# 客服分诊准确率测试 —— Promptfoo 多 Prompt / 多 Model 对比
+# 对应文章第三节。
+#
+# 运行：
+#   npm install -g promptfoo   # 或 npx promptfoo@latest
+#   export OPENAI_API_KEY=...  # 若使用 openai provider
+#   promptfoo eval             # 退出码反映通过率，适合 CI
+#   promptfoo view             # 打开 HTML 报告，可分享给非工程师
+#
+# 说明：providers 需要对应厂商的 API key；无 key 时可用
+# `-p file://prompts/...` 配合本地 mock，或改成你自建 Gateway 的 endpoint。
+description: "客服分诊准确率测试"
+
+prompts:
+  - file://prompts/classifier_v1.txt
+  - file://prompts/classifier_v2.txt   # 同时测两个 Prompt 版本
+
+providers:
+  - openai:gpt-4o
+  - anthropic:claude-3-5-sonnet         # 同时测两个模型
+
+tests:
+  - vars:
+      user_input: "我的订单怎么还没到"
+    assert:
+      - type: equals
+        value: "logistics"               # 应该分诊到物流
+      - type: latency
+        threshold: 2000                  # 响应 < 2 秒
+
+  - vars:
+      user_input: "这个产品有质量问题"
+    assert:
+      - type: equals
+        value: "complaint"
+
+  - vars:
+      user_input: "我想了解你们的产品"
+    assert:
+      - type: contains
+        value: "product_info"
+      - type: llm-rubric                  # 用 LLM 判别
+        rubric: "回答应该礼貌、专业、避免承诺"
+
+  - vars:
+      user_input: "我要退款"
+    assert:
+      - type: equals
+        value: "refund"
+
+  - vars:
+      user_input: "你们客服电话多少"
+    assert:
+      - type: contains
+        value: "contact"

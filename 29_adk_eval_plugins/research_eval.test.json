@@ -1,0 +1,31 @@
+[
+  {
+    "name": "search_ai_trends",
+    "data": [
+      {
+        "query": "Research AI trends in 2025",
+        "expected_tool_use": [
+          {
+            "tool_name": "search_web",
+            "tool_input": {
+              "query": "latest AI trends 2025"
+            }
+          }
+        ],
+        "reference": "Based on research, trends include agentic AI..."
+      },
+      {
+        "query": "Continue with adoption rates",
+        "expected_tool_use": [
+          {
+            "tool_name": "search_web",
+            "tool_input": {
+              "query": "AI adoption rates"
+            }
+          }
+        ],
+        "reference": "AI adoption is growing across enterprises..."
+      }
+    ]
+  }
+]
