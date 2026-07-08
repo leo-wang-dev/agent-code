@@ -20,8 +20,7 @@ python3 19_langgraph_intro/demo.py
 python3 -m series_projects.chapter_runner 19
 ```
 
-代码默认使用标准库和本仓库内的轻量实现，不依赖外部 API Key。部分设计借鉴了
-`/Users/elias/code/practice-and-learning` 里的学习项目结构，尤其是
-`langgraph-learn`、`google-adk`、`crewai-learn`、`deepagents-learn` 和
-`llamaindex-learn`。
+代码默认使用标准库和本仓库内的轻量实现，不依赖外部 API Key，也不依赖任何外部数据目录——
+采购目录与知识库数据已内置离线样本（见 `practice_assets.py`）。想换成自己的更大数据集，
+设置环境变量 `PRACTICE_DATA_DIR` 指向包含 `catalog.json` 与 `knowledge/` 的目录即可，无需改代码。
 
